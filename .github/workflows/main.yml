@@ -17,7 +17,6 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          # MENAMBAHKAN 'lld' DI BARIS INI
           sudo apt-get install -y bc bison build-essential ccache flex \
             g++-multilib gcc-multilib git gnupg gperf imagemagick \
             lib32readline-dev lib32z1-dev libelf-dev lz4 lld \
@@ -29,6 +28,16 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/Neutron-Toolchains/clang-build -b main ${{ github.workspace }}/clang
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
+
+      - name: Patch libbpf for C23 Compatibility
+        working-directory: kernel
+        run: |
+          # Terapkan patch upstream untuk memperbaiki error -Wdiscarded-qualifiers
+          # Patch ini mengubah tipe variabel menjadi const char*
+          sed -i 's/char \*next_path;/const char *next_path;/' tools/lib/bpf/libbpf.c
+          sed -i 's/char \*res;/const char *res;/' tools/lib/bpf/libbpf.c
+          sed -i 's/char sym_trim\[256\], \*psym_trim = sym_trim, \*sym_sfx;/char sym_trim[256], *psym_trim = sym_trim; const char *sym_sfx;/' tools/lib/bpf/libbpf.c
+          echo "Patch libbpf berhasil diterapkan."
 
       - name: Integrate BakaSU
         working-directory: kernel
@@ -68,9 +77,11 @@ jobs:
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
-          # MENAMBAHKAN LD=ld.lld DAN LLVM=1
+          export LLVM_PATH="${{ github.workspace }}/clang"
+          
+          # Menggunakan LLVM_PATH secara eksplisit untuk memastikan semua alat ditemukan
           make -j$(nproc) O=out ARCH=arm64 \
-               LLVM=1 LLVM_IAS=1 \
+               LLVM="${LLVM_PATH}/" \
                CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
                OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
                CROSS_COMPILE=aarch64-linux-gnu- \
