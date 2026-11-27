@@ -33,7 +33,6 @@ jobs:
         working-directory: kernel
         run: |
           # Terapkan patch upstream untuk memperbaiki error -Wdiscarded-qualifiers
-          # Patch ini mengubah tipe variabel menjadi const char*
           sed -i 's/char \*next_path;/const char *next_path;/' tools/lib/bpf/libbpf.c
           sed -i 's/char \*res;/const char *res;/' tools/lib/bpf/libbpf.c
           sed -i 's/char sym_trim\[256\], \*psym_trim = sym_trim, \*sym_sfx;/char sym_trim[256], *psym_trim = sym_trim; const char *sym_sfx;/' tools/lib/bpf/libbpf.c
@@ -77,13 +76,13 @@ jobs:
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
-          export LLVM_PATH="${{ github.workspace }}/clang"
           
-          # Menggunakan LLVM_PATH secara eksplisit untuk memastikan semua alat ditemukan
+          # SOLUSI: Arahkan variabel LLVM langsung ke dalam folder 'bin'
+          export LLVM_BIN="${{ github.workspace }}/clang/bin/"
+          
+          # Cukup panggil LLVM=$LLVM_BIN, jangan definisikan CC, LD, AR secara manual lagi
           make -j$(nproc) O=out ARCH=arm64 \
-               LLVM="${LLVM_PATH}/" \
-               CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
-               OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+               LLVM="$LLVM_BIN" \
                CROSS_COMPILE=aarch64-linux-gnu- \
                CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
