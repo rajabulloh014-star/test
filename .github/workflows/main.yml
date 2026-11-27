@@ -5,7 +5,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # SOLUSI: Kunci runner ke Ubuntu 24.04 yang masih mendukung libxml2.so.2
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
@@ -26,13 +27,11 @@ jobs:
 
       - name: Download & Setup Toolchain (LLVM 22.1.2)
         run: |
-          # Unduh LLVM 22.1.2 resmi
           wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.2/LLVM-22.1.2-Linux-X64.tar.xz -O llvm.tar.xz
           mkdir -p clang
           tar -xf llvm.tar.xz -C clang --strip-components=1
           rm llvm.tar.xz
           
-          # Verifikasi clang tersedia
           if [ -f "clang/bin/clang" ]; then
             echo "Clang ditemukan: $(clang/bin/clang --version | head -n 1)"
           else
@@ -40,7 +39,6 @@ jobs:
             exit 1
           fi
           
-          # Tambahkan ke PATH (untuk host tools)
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
 
       - name: Patch libbpf for C23 Compatibility
@@ -90,10 +88,8 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
           
-          # Path absolut ke folder bin LLVM
           export LLVM_BIN="${{ github.workspace }}/clang/bin/"
           
-          # LLVM= dan LLVM_IAS=1
           make -j$(nproc) O=out ARCH=arm64 \
                LLVM="$LLVM_BIN" \
                LLVM_IAS=1 \
