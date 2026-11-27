@@ -22,17 +22,30 @@ jobs:
             lib32readline-dev lib32z1-dev libelf-dev lz4 lld \
             libsdl1.2-dev libssl-dev libxml2-dev libxml2-utils lzop \
             pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev \
-            python3 python-is-python3
+            python3 python-is-python3 wget xz-utils
 
-      - name: Setup Toolchain (Clang 22.0.2)
+      - name: Download & Setup Toolchain (LLVM 22.1.2)
         run: |
-          git clone --depth=1 https://github.com/Neutron-Toolchains/clang-build -b main ${{ github.workspace }}/clang
+          # Unduh LLVM 22.1.2 resmi
+          wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.2/LLVM-22.1.2-Linux-X64.tar.xz -O llvm.tar.xz
+          mkdir -p clang
+          tar -xf llvm.tar.xz -C clang --strip-components=1
+          rm llvm.tar.xz
+          
+          # Verifikasi clang tersedia
+          if [ -f "clang/bin/clang" ]; then
+            echo "Clang ditemukan: $(clang/bin/clang --version | head -n 1)"
+          else
+            echo "Error: clang tidak ditemukan setelah ekstraksi!"
+            exit 1
+          fi
+          
+          # Tambahkan ke PATH (untuk host tools)
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
 
       - name: Patch libbpf for C23 Compatibility
         working-directory: kernel
         run: |
-          # Terapkan patch upstream untuk memperbaiki error -Wdiscarded-qualifiers
           sed -i 's/char \*next_path;/const char *next_path;/' tools/lib/bpf/libbpf.c
           sed -i 's/char \*res;/const char *res;/' tools/lib/bpf/libbpf.c
           sed -i 's/char sym_trim\[256\], \*psym_trim = sym_trim, \*sym_sfx;/char sym_trim[256], *psym_trim = sym_trim; const char *sym_sfx;/' tools/lib/bpf/libbpf.c
@@ -77,12 +90,13 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
           
-          # SOLUSI: Arahkan variabel LLVM langsung ke dalam folder 'bin'
+          # Path absolut ke folder bin LLVM
           export LLVM_BIN="${{ github.workspace }}/clang/bin/"
           
-          # Cukup panggil LLVM=$LLVM_BIN, jangan definisikan CC, LD, AR secara manual lagi
+          # LLVM= dan LLVM_IAS=1
           make -j$(nproc) O=out ARCH=arm64 \
                LLVM="$LLVM_BIN" \
+               LLVM_IAS=1 \
                CROSS_COMPILE=aarch64-linux-gnu- \
                CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
