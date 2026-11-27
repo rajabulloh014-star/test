@@ -17,7 +17,6 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          # MENAMBAHKAN 'cpio' DI BARIS INI
           sudo apt-get install -y bc bison build-essential ccache cpio flex \
             g++-multilib gcc-multilib git gnupg gperf imagemagick \
             lib32readline-dev lib32z1-dev libelf-dev lz4 lld \
@@ -38,7 +37,6 @@ jobs:
             echo "Error: clang tidak ditemukan setelah ekstraksi!"
             exit 1
           fi
-          
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
 
       - name: Patch libbpf for C23 Compatibility
@@ -80,6 +78,10 @@ jobs:
           mkdir -p out
           make O=out ARCH=arm64 gki_defconfig
           cat arch/arm64/configs/vendor/zorn_GKI.config >> out/.config
+          
+          # SOLUSI: Nonaktifkan IKHEADERS untuk melewati pembuatan arsip
+          echo "# CONFIG_IKHEADERS is not set" >> out/.config
+          
           make O=out ARCH=arm64 olddefconfig
 
       - name: Build Kernel
@@ -87,7 +89,6 @@ jobs:
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
-          
           export LLVM_BIN="${{ github.workspace }}/clang/bin/"
           
           make -j$(nproc) O=out ARCH=arm64 \
