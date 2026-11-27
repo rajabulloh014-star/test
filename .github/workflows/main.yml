@@ -40,12 +40,9 @@ jobs:
       - name: Patch Kernel Source (libbpf & extract-cert)
         working-directory: kernel
         run: |
-          # 1. Patch libbpf (C23 Compatibility)
           sed -i 's/char \*next_path;/const char *next_path;/' tools/lib/bpf/libbpf.c
           sed -i 's/char \*res;/const char *res;/' tools/lib/bpf/libbpf.c
           sed -i 's/char sym_trim\[256\], \*psym_trim = sym_trim, \*sym_sfx;/char sym_trim[256], *psym_trim = sym_trim; const char *sym_sfx;/' tools/lib/bpf/libbpf.c
-          
-          # 2. Patch certs/extract-cert.c (Deklarasi 'key_pass' yang hilang)
           sed -i '/#include <openssl\/engine.h>/a static const char *key_pass;' certs/extract-cert.c
 
       - name: Integrate BakaSU
@@ -80,6 +77,10 @@ jobs:
           make O=out ARCH=arm64 gki_defconfig
           cat arch/arm64/configs/vendor/zorn_GKI.config >> out/.config
           echo "# CONFIG_IKHEADERS is not set" >> out/.config
+          
+          # SOLUSI: Naikkan batas frame warn dari 2048 ke 8192
+          echo "CONFIG_FRAME_WARN=8192" >> out/.config
+          
           make O=out ARCH=arm64 olddefconfig
 
       - name: Build Kernel (With Full Logging)
@@ -91,9 +92,11 @@ jobs:
           
           set -o pipefail
           
+          # SOLUSI: Tambahkan KCFLAGS untuk mengabaikan error frame-larger-than
           make -j$(nproc) O=out ARCH=arm64 \
                LLVM="$LLVM_BIN" \
                LLVM_IAS=1 \
+               KCFLAGS="-Wno-error=frame-larger-than" \
                CROSS_COMPILE=aarch64-linux-gnu- \
                CROSS_COMPILE_ARM32=arm-linux-gnueabi- 2>&1 | tee build.log
 
