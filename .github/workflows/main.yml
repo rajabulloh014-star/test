@@ -5,7 +5,6 @@ on:
 
 jobs:
   build:
-    # SOLUSI: Kunci runner ke Ubuntu 24.04 yang masih mendukung libxml2.so.2
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Kernel Source
@@ -18,7 +17,8 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache flex \
+          # MENAMBAHKAN 'cpio' DI BARIS INI
+          sudo apt-get install -y bc bison build-essential ccache cpio flex \
             g++-multilib gcc-multilib git gnupg gperf imagemagick \
             lib32readline-dev lib32z1-dev libelf-dev lz4 lld \
             libsdl1.2-dev libssl-dev libxml2-dev libxml2-utils lzop \
