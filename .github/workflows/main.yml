@@ -14,12 +14,10 @@ jobs:
           path: kernel
           ref: lineage-24.0
 
-      # STEP BARU: Hapus repo Microsoft yang sering error 403
       - name: Remove problematic Microsoft repository
         run: |
           sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
           sudo rm -f /etc/apt/sources.list.d/azure-cli.list
-          echo "Repositori Microsoft dihapus."
 
       - name: Install Dependencies
         run: |
@@ -37,13 +35,6 @@ jobs:
           mkdir -p clang
           tar -xf llvm.tar.xz -C clang --strip-components=1
           rm llvm.tar.xz
-          
-          if [ -f "clang/bin/clang" ]; then
-            echo "Clang ditemukan: $(clang/bin/clang --version | head -n 1)"
-          else
-            echo "Error: clang tidak ditemukan setelah ekstraksi!"
-            exit 1
-          fi
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
 
       - name: Patch libbpf for C23 Compatibility
@@ -52,7 +43,6 @@ jobs:
           sed -i 's/char \*next_path;/const char *next_path;/' tools/lib/bpf/libbpf.c
           sed -i 's/char \*res;/const char *res;/' tools/lib/bpf/libbpf.c
           sed -i 's/char sym_trim\[256\], \*psym_trim = sym_trim, \*sym_sfx;/char sym_trim[256], *psym_trim = sym_trim; const char *sym_sfx;/' tools/lib/bpf/libbpf.c
-          echo "Patch libbpf berhasil diterapkan."
 
       - name: Integrate BakaSU
         working-directory: kernel
@@ -88,20 +78,36 @@ jobs:
           echo "# CONFIG_IKHEADERS is not set" >> out/.config
           make O=out ARCH=arm64 olddefconfig
 
-      - name: Build Kernel
+      - name: Build Kernel (With Full Logging)
         working-directory: kernel
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
           export LLVM_BIN="${{ github.workspace }}/clang/bin/"
           
+          # Gunakan pipefail agar exit code dari make bisa tertangkap
+          set -o pipefail
+          
+          # Simpan semua output ke build.log
           make -j$(nproc) O=out ARCH=arm64 \
                LLVM="$LLVM_BIN" \
                LLVM_IAS=1 \
                CROSS_COMPILE=aarch64-linux-gnu- \
-               CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+               CROSS_COMPILE_ARM32=arm-linux-gnueabi- 2>&1 | tee build.log
+
+      - name: Show Real Errors if Build Failed
+        if: failure() # Hanya berjalan jika step sebelumnya gagal
+        working-directory: kernel
+        run: |
+          echo "=== MENCARI ERROR ASLI DI DALAM LOG ==="
+          # Cari kata 'error', 'fatal', atau 'killed' di build.log
+          grep -i -n -A 5 -B 2 "error:\|fatal error:\|killed" build.log | tail -n 50
+          
+          echo "=== 50 BARIS TERAKHIR DARI LOG ==="
+          tail -n 50 build.log
 
       - name: Package with AnyKernel3
+        if: success() # Hanya berjalan jika build berhasil
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
           cd anykernel
@@ -128,6 +134,7 @@ jobs:
           zip -r9 "../$ZIP_NAME" * -x .git README.md '*placeholder'
 
       - name: Upload Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zorn-kernel-flashable-zip
