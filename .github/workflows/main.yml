@@ -40,12 +40,9 @@ jobs:
       - name: Patch Kernel Source (libbpf & extract-cert)
         working-directory: kernel
         run: |
-          # 1. Patch libbpf untuk kompatibilitas C23
           sed -i 's/char \*next_path;/const char *next_path;/' tools/lib/bpf/libbpf.c
           sed -i 's/char \*res;/const char *res;/' tools/lib/bpf/libbpf.c
           sed -i 's/char sym_trim\[256\], \*psym_trim = sym_trim, \*sym_sfx;/char sym_trim[256], *psym_trim = sym_trim; const char *sym_sfx;/' tools/lib/bpf/libbpf.c
-          
-          # 2. Patch extract-cert.c untuk variabel key_pass yang hilang
           sed -i '/#include <openssl\/engine.h>/a static const char *key_pass;' certs/extract-cert.c
 
       - name: Integrate BakaSU
@@ -79,19 +76,18 @@ jobs:
           mkdir -p out
           make O=out ARCH=arm64 gki_defconfig
           
-          # Gabungkan fragment config khusus device zorn
           cat arch/arm64/configs/vendor/zorn_GKI.config >> out/.config
           
-          # Matikan fitur yang tidak diperlukan / bermasalah
+          # Matikan fitur yang tidak perlu dan memakan RAM
           echo "# CONFIG_IKHEADERS is not set" >> out/.config
           echo "# CONFIG_MTD_OOPS is not set" >> out/.config
+          echo "# CONFIG_DEBUG_INFO_BTF is not set" >> out/.config  # <-- KUNCI ANTI-OOM
           
-          # Naikkan batas warning stack frame
           echo "CONFIG_FRAME_WARN=8192" >> out/.config
           
           make O=out ARCH=arm64 olddefconfig
 
-      - name: Build Kernel (With Full Logging)
+      - name: Build Kernel (With Full Logging & -j2)
         working-directory: kernel
         run: |
           export ARCH=arm64
@@ -100,8 +96,8 @@ jobs:
           
           set -o pipefail
           
-          # Build dengan flag untuk mengabaikan error frame-larger-than
-          make -j$(nproc) O=out ARCH=arm64 \
+          # SOLUSI OOM: Gunakan -j2 saja agar RAM tidak habis
+          make -j2 O=out ARCH=arm64 \
                LLVM="$LLVM_BIN" \
                LLVM_IAS=1 \
                KCFLAGS="-Wno-error=frame-larger-than" \
@@ -113,7 +109,9 @@ jobs:
         working-directory: kernel
         run: |
           echo "=== MENCARI ERROR ASLI DI DALAM LOG ==="
-          grep -i -n -A 5 -B 2 "error:\|fatal error:\|killed" build.log | tail -n 50
+          grep -i -n -A 5 -B 2 "error:\|fatal error:\|killed\|undefined!" build.log | tail -n 50
+          echo "=== CEK FILE IMAGE ==="
+          ls -lh out/arch/arm64/boot/
           echo "=== 50 BARIS TERAKHIR DARI LOG ==="
           tail -n 50 build.log
 
