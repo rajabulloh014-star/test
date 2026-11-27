@@ -40,9 +40,12 @@ jobs:
       - name: Patch Kernel Source (libbpf & extract-cert)
         working-directory: kernel
         run: |
+          # 1. Patch libbpf untuk kompatibilitas C23
           sed -i 's/char \*next_path;/const char *next_path;/' tools/lib/bpf/libbpf.c
           sed -i 's/char \*res;/const char *res;/' tools/lib/bpf/libbpf.c
           sed -i 's/char sym_trim\[256\], \*psym_trim = sym_trim, \*sym_sfx;/char sym_trim[256], *psym_trim = sym_trim; const char *sym_sfx;/' tools/lib/bpf/libbpf.c
+          
+          # 2. Patch extract-cert.c untuk variabel key_pass yang hilang
           sed -i '/#include <openssl\/engine.h>/a static const char *key_pass;' certs/extract-cert.c
 
       - name: Integrate BakaSU
@@ -75,10 +78,15 @@ jobs:
           export SUBARCH=arm64
           mkdir -p out
           make O=out ARCH=arm64 gki_defconfig
-          cat arch/arm64/configs/vendor/zorn_GKI.config >> out/.config
-          echo "# CONFIG_IKHEADERS is not set" >> out/.config
           
-          # SOLUSI: Naikkan batas frame warn dari 2048 ke 8192
+          # Gabungkan fragment config khusus device zorn
+          cat arch/arm64/configs/vendor/zorn_GKI.config >> out/.config
+          
+          # Matikan fitur yang tidak diperlukan / bermasalah
+          echo "# CONFIG_IKHEADERS is not set" >> out/.config
+          echo "# CONFIG_MTD_OOPS is not set" >> out/.config
+          
+          # Naikkan batas warning stack frame
           echo "CONFIG_FRAME_WARN=8192" >> out/.config
           
           make O=out ARCH=arm64 olddefconfig
@@ -92,7 +100,7 @@ jobs:
           
           set -o pipefail
           
-          # SOLUSI: Tambahkan KCFLAGS untuk mengabaikan error frame-larger-than
+          # Build dengan flag untuk mengabaikan error frame-larger-than
           make -j$(nproc) O=out ARCH=arm64 \
                LLVM="$LLVM_BIN" \
                LLVM_IAS=1 \
