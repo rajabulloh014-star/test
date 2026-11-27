@@ -2,6 +2,15 @@ name: Build Kernel Zorn (BakaSU + SUSFS + NoMount)
 
 on:
   workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Nama Kernel (Tampil di About Phone)'
+        required: true
+        default: 'Zorn Kernel | BakaSU + SUSFS + NoMount'
+      zip_name:
+        description: 'Nama File Zip Output (tanpa .zip)'
+        required: true
+        default: 'Zorn-Kernel-Flashable'
 
 jobs:
   build:
@@ -78,11 +87,12 @@ jobs:
           
           cat arch/arm64/configs/vendor/zorn_GKI.config >> out/.config
           
-          # Matikan fitur yang tidak perlu dan memakan RAM
+          # Matikan fitur bermasalah / OOM
           echo "# CONFIG_IKHEADERS is not set" >> out/.config
           echo "# CONFIG_MTD_OOPS is not set" >> out/.config
-          echo "# CONFIG_DEBUG_INFO_BTF is not set" >> out/.config  # <-- KUNCI ANTI-OOM
+          echo "# CONFIG_DEBUG_INFO_BTF is not set" >> out/.config
           
+          # Naikkan batas warning stack
           echo "CONFIG_FRAME_WARN=8192" >> out/.config
           
           make O=out ARCH=arm64 olddefconfig
@@ -96,7 +106,7 @@ jobs:
           
           set -o pipefail
           
-          # SOLUSI OOM: Gunakan -j2 saja agar RAM tidak habis
+          # Gunakan -j2 untuk mencegah Out Of Memory di GitHub Actions
           make -j2 O=out ARCH=arm64 \
                LLVM="$LLVM_BIN" \
                LLVM_IAS=1 \
@@ -110,17 +120,16 @@ jobs:
         run: |
           echo "=== MENCARI ERROR ASLI DI DALAM LOG ==="
           grep -i -n -A 5 -B 2 "error:\|fatal error:\|killed\|undefined!" build.log | tail -n 50
-          echo "=== CEK FILE IMAGE ==="
-          ls -lh out/arch/arm64/boot/
           echo "=== 50 BARIS TERAKHIR DARI LOG ==="
           tail -n 50 build.log
 
-      - name: Package with AnyKernel3
+      - name: Package with AnyKernel3 (Auto-Patch)
         if: success()
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
           cd anykernel
 
+          # Copy Image Kernel
           KERNEL_IMAGE=""
           for f in "Image.gz-dtb" "Image.gz" "Image"; do
             if [ -f "${{ github.workspace }}/kernel/out/arch/arm64/boot/$f" ]; then
@@ -136,10 +145,27 @@ jobs:
             exit 1
           fi
 
-          sed -i 's/device.name1=.*/device.name1=zorn/' anykernel.sh
-          sed -i 's/kernel.string=.*/kernel.string=Zorn Kernel | BakaSU + SUSFS + NoMount/' anykernel.sh
+          # ==========================================
+          # KUSTOMISASI ANY KERNEL 3 UNTUK ZORN
+          # ==========================================
+          # 1. Ubah Nama Kernel
+          sed -i "s|kernel.string=.*|kernel.string=${{ github.event.inputs.kernel_name }}|" anykernel.sh
           
-          ZIP_NAME="zorn-kernel-bakasu-susfs-$(date +%Y%m%d-%H%M).zip"
+          # 2. Ubah Device Name (Hanya biarkan zorn)
+          sed -i 's/device.name1=.*/device.name1=zorn/' anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=/' anykernel.sh
+          sed -i 's/device.name3=.*/device.name3=/' anykernel.sh
+          sed -i 's/device.name4=.*/device.name4=/' anykernel.sh
+          sed -i 's/device.name5=.*/device.name5=/' anykernel.sh
+          
+          # 3. Ubah Path Partisi Boot ke Qualcomm (SM8650)
+          sed -i 's|BLOCK=.*|BLOCK=/dev/block/bootdevice/by-name/boot;|' anykernel.sh
+          
+          # 4. Set sebagai A/B Device (Karena Poco F7 Pro pakai slot A/B)
+          sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1;/' anykernel.sh
+          
+          # Zip file
+          ZIP_NAME="${{ github.event.inputs.zip_name }}-$(date +%Y%m%d-%H%M).zip"
           zip -r9 "../$ZIP_NAME" * -x .git README.md '*placeholder'
 
       - name: Upload Artifact
@@ -147,4 +173,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zorn-kernel-flashable-zip
-          path: zorn-kernel-*.zip
+          path: ${{ github.event.inputs.zip_name }}-*.zip
