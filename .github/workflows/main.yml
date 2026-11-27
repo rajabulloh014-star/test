@@ -14,6 +14,13 @@ jobs:
           path: kernel
           ref: lineage-24.0
 
+      # STEP BARU: Hapus repo Microsoft yang sering error 403
+      - name: Remove problematic Microsoft repository
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
+          sudo rm -f /etc/apt/sources.list.d/azure-cli.list
+          echo "Repositori Microsoft dihapus."
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -78,10 +85,7 @@ jobs:
           mkdir -p out
           make O=out ARCH=arm64 gki_defconfig
           cat arch/arm64/configs/vendor/zorn_GKI.config >> out/.config
-          
-          # SOLUSI: Nonaktifkan IKHEADERS untuk melewati pembuatan arsip
           echo "# CONFIG_IKHEADERS is not set" >> out/.config
-          
           make O=out ARCH=arm64 olddefconfig
 
       - name: Build Kernel
