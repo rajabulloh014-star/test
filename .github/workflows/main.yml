@@ -37,12 +37,16 @@ jobs:
           rm llvm.tar.xz
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
 
-      - name: Patch libbpf for C23 Compatibility
+      - name: Patch Kernel Source (libbpf & extract-cert)
         working-directory: kernel
         run: |
+          # 1. Patch libbpf (C23 Compatibility)
           sed -i 's/char \*next_path;/const char *next_path;/' tools/lib/bpf/libbpf.c
           sed -i 's/char \*res;/const char *res;/' tools/lib/bpf/libbpf.c
           sed -i 's/char sym_trim\[256\], \*psym_trim = sym_trim, \*sym_sfx;/char sym_trim[256], *psym_trim = sym_trim; const char *sym_sfx;/' tools/lib/bpf/libbpf.c
+          
+          # 2. Patch certs/extract-cert.c (Deklarasi 'key_pass' yang hilang)
+          sed -i '/#include <openssl\/engine.h>/a static const char *key_pass;' certs/extract-cert.c
 
       - name: Integrate BakaSU
         working-directory: kernel
@@ -85,10 +89,8 @@ jobs:
           export SUBARCH=arm64
           export LLVM_BIN="${{ github.workspace }}/clang/bin/"
           
-          # Gunakan pipefail agar exit code dari make bisa tertangkap
           set -o pipefail
           
-          # Simpan semua output ke build.log
           make -j$(nproc) O=out ARCH=arm64 \
                LLVM="$LLVM_BIN" \
                LLVM_IAS=1 \
@@ -96,18 +98,16 @@ jobs:
                CROSS_COMPILE_ARM32=arm-linux-gnueabi- 2>&1 | tee build.log
 
       - name: Show Real Errors if Build Failed
-        if: failure() # Hanya berjalan jika step sebelumnya gagal
+        if: failure()
         working-directory: kernel
         run: |
           echo "=== MENCARI ERROR ASLI DI DALAM LOG ==="
-          # Cari kata 'error', 'fatal', atau 'killed' di build.log
           grep -i -n -A 5 -B 2 "error:\|fatal error:\|killed" build.log | tail -n 50
-          
           echo "=== 50 BARIS TERAKHIR DARI LOG ==="
           tail -n 50 build.log
 
       - name: Package with AnyKernel3
-        if: success() # Hanya berjalan jika build berhasil
+        if: success()
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
           cd anykernel
