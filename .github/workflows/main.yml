@@ -1,7 +1,7 @@
 name: Build Kernel Zorn (BakaSU + SUSFS + NoMount)
 
 on:
-  workflow_dispatch: # Memungkinkan menjalankan build secara manual dari tab Actions
+  workflow_dispatch:
 
 jobs:
   build:
@@ -12,55 +12,45 @@ jobs:
         with:
           repository: zorn-trees/android_kernel_xiaomi_sm8650
           path: kernel
-          ref: lineage-24.0 # Branch yang benar sesuai screenshot
+          ref: lineage-24.0
 
-      - name: Install Dependencies (Fixed for Ubuntu 24.04)
+      - name: Install Dependencies
         run: |
           sudo apt-get update
+          # MENAMBAHKAN 'lld' DI BARIS INI
           sudo apt-get install -y bc bison build-essential ccache flex \
             g++-multilib gcc-multilib git gnupg gperf imagemagick \
-            lib32readline-dev lib32z1-dev libelf-dev lz4 \
+            lib32readline-dev lib32z1-dev libelf-dev lz4 lld \
             libsdl1.2-dev libssl-dev libxml2-dev libxml2-utils lzop \
             pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev \
             python3 python-is-python3
 
       - name: Setup Toolchain (Clang 22.0.2)
         run: |
-          # Menggunakan Clang 22 dari Neutron (sering dipakai untuk kernel 6.1+)
           git clone --depth=1 https://github.com/Neutron-Toolchains/clang-build -b main ${{ github.workspace }}/clang
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
 
       - name: Integrate BakaSU
         working-directory: kernel
         run: |
-          echo "Mengintegrasikan BakaSU..."
           curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
 
       - name: Integrate NoMount
         working-directory: kernel
         run: |
-          echo "Mengintegrasikan NoMount..."
           git clone --depth=1 https://github.com/maxsteeel/nomount.git nomount-src
           cd nomount-src
-          bash setup.sh || echo "Peringatan: NoMount setup.sh gagal atau butuh penyesuaian manual."
+          bash setup.sh || echo "Peringatan: NoMount setup.sh gagal."
 
       - name: Apply SUSFS Patch
         working-directory: kernel
         run: |
-          echo "Mendeteksi versi kernel..."
           KERNEL_VERSION=$(make kernelversion | cut -d. -f1,2)
-          echo "Versi Kernel Terdeteksi: $KERNEL_VERSION"
-          
           git clone --depth=1 https://github.com/zzh20188/GKI_KernelSU_SUSFS.git susfs-repo
-          
-          # Mencari patch SUSFS yang cocok dengan versi kernel GKI
           PATCH_FILE=$(find susfs-repo -name "*gki*${KERNEL_VERSION}*.patch" | head -n 1)
-          
           if [ -n "$PATCH_FILE" ]; then
             echo "Menerapkan patch: $PATCH_FILE"
-            patch -p1 < "$PATCH_FILE" || echo "Peringatan: Patch SUSFS gagal diterapkan (mungkin sudah ada atau konflik)."
-          else
-            echo "Error: Patch SUSFS untuk GKI $KERNEL_VERSION tidak ditemukan di repo. Silakan cek manual."
+            patch -p1 < "$PATCH_FILE" || echo "Peringatan: Patch SUSFS gagal."
           fi
 
       - name: Configure Kernel (GKI + Fragment Zorn)
@@ -69,15 +59,8 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
           mkdir -p out
-
-          echo "Membuat GKI Defconfig..."
           make O=out ARCH=arm64 gki_defconfig
-
-          echo "Menggabungkan fragment zorn_GKI.config..."
-          # Menggabungkan file fragment ke dalam .config utama
           cat arch/arm64/configs/vendor/zorn_GKI.config >> out/.config
-
-          echo "Menjalankan olddefconfig untuk menyelesaikan dependensi..."
           make O=out ARCH=arm64 olddefconfig
 
       - name: Build Kernel
@@ -85,19 +68,19 @@ jobs:
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
-          echo "Memulai proses compile..."
-          make -j$(nproc) O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar \
-               NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
-               STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- \
+          # MENAMBAHKAN LD=ld.lld DAN LLVM=1
+          make -j$(nproc) O=out ARCH=arm64 \
+               LLVM=1 LLVM_IAS=1 \
+               CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
+               OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+               CROSS_COMPILE=aarch64-linux-gnu- \
                CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
       - name: Package with AnyKernel3
         run: |
-          echo "Menyiapkan AnyKernel3..."
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
           cd anykernel
 
-          # Mencari file Image hasil build
           KERNEL_IMAGE=""
           for f in "Image.gz-dtb" "Image.gz" "Image"; do
             if [ -f "${{ github.workspace }}/kernel/out/arch/arm64/boot/$f" ]; then
@@ -108,19 +91,14 @@ jobs:
 
           if [ -f "$KERNEL_IMAGE" ]; then
             cp "$KERNEL_IMAGE" .
-            echo "Berhasil menyalin: $(basename $KERNEL_IMAGE)"
           else
-            echo "Error: File Image Kernel tidak ditemukan di out/arch/arm64/boot/!"
+            echo "Error: File Image Kernel tidak ditemukan!"
             exit 1
           fi
 
-          # Kustomisasi AnyKernel3 untuk device zorn
           sed -i 's/device.name1=.*/device.name1=zorn/' anykernel.sh
           sed -i 's/kernel.string=.*/kernel.string=Zorn Kernel | BakaSU + SUSFS + NoMount/' anykernel.sh
           
-          # Opsional: Pastikan nama block device benar (biasanya sudah otomatis di AnyKernel3)
-          # sed -i 's|BLOCK=.*|BLOCK=/dev/block/bootdevice/by-name/boot;|' anykernel.sh
-
           ZIP_NAME="zorn-kernel-bakasu-susfs-$(date +%Y%m%d-%H%M).zip"
           zip -r9 "../$ZIP_NAME" * -x .git README.md '*placeholder'
 
