@@ -1,0 +1,119 @@
+name: Build Kernel Zorn (BakaSU + SUSFS + NoMount)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: zorn-trees/android_kernel_xiaomi_sm8650
+          path: kernel
+          ref: lineage-24.0 # Branch yang benar
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache flex \
+            g++-multilib gcc-multilib git gnupg gperf imagemagick \
+            lib32readline-dev lib32z1-dev libelf-dev liblz4-tool \
+            libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop \
+            pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev \
+            python3 python-is-python3
+
+      - name: Setup Toolchain (Clang 22.0.2)
+        run: |
+          # Menggunakan Clang 22.0.2 sesuai rekomendasi
+          git clone --depth=1 https://github.com/Neutron-Toolchains/clang-build -b main ${{ github.workspace }}/clang
+          echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
+
+      - name: Integrate BakaSU
+        working-directory: kernel
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
+
+      - name: Integrate NoMount
+        working-directory: kernel
+        run: |
+          git clone --depth=1 https://github.com/maxsteeel/nomount.git nomount-src
+          cd nomount-src
+          bash setup.sh || echo "NoMount setup mungkin perlu penyesuaian manual."
+
+      - name: Apply SUSFS Patch
+        working-directory: kernel
+        run: |
+          KERNEL_VERSION=$(make kernelversion | cut -d. -f1,2)
+          echo "Kernel version: $KERNEL_VERSION"
+          git clone --depth=1 https://github.com/zzh20188/GKI_KernelSU_SUSFS.git susfs-repo
+          # Cari patch untuk GKI (misal: 50_add_susfs_in_gki-android14-6.1.patch)
+          PATCH_FILE=$(find susfs-repo -name "*gki*${KERNEL_VERSION}*.patch" | head -n 1)
+          if [ -n "$PATCH_FILE" ]; then
+            echo "Applying: $PATCH_FILE"
+            patch -p1 < "$PATCH_FILE" || echo "Patch gagal, cek manual."
+          else
+            echo "Patch SUSFS untuk GKI $KERNEL_VERSION tidak ditemukan."
+          fi
+
+      - name: Configure Kernel (GKI + Fragment Zorn)
+        working-directory: kernel
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          mkdir -p out
+
+          # 1. Gunakan defconfig GKI sebagai basis
+          make O=out ARCH=arm64 gki_defconfig
+
+          # 2. Gabungkan fragment zorn_GKI.config ke dalam .config
+          # (File ini ada di arch/arm64/configs/vendor/zorn_GKI.config)
+          cat arch/arm64/configs/vendor/zorn_GKI.config >> out/.config
+
+          # 3. Sinkronisasi ulang konfigurasi
+          make O=out ARCH=arm64 olddefconfig
+
+      - name: Build Kernel
+        working-directory: kernel
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          make -j$(nproc) O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar \
+               NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+               STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- \
+               CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          cd anykernel
+
+          # Cari file Image (bisa Image, Image.gz, atau Image.gz-dtb)
+          KERNEL_IMAGE=""
+          for f in "Image.gz-dtb" "Image.gz" "Image"; do
+            if [ -f "${{ github.workspace }}/kernel/out/arch/arm64/boot/$f" ]; then
+              KERNEL_IMAGE="${{ github.workspace }}/kernel/out/arch/arm64/boot/$f"
+              break
+            fi
+          done
+
+          if [ -f "$KERNEL_IMAGE" ]; then
+            cp "$KERNEL_IMAGE" .
+            echo "Kernel image: $(basename $KERNEL_IMAGE)"
+          else
+            echo "Error: Image tidak ditemukan!"
+            exit 1
+          fi
+
+          sed -i 's/device.name1=.*/device.name1=zorn/' anykernel.sh
+          sed -i 's/kernel.string=.*/kernel.string=BakaSU + SUSFS + NoMount (Zorn)/' anykernel.sh
+
+          ZIP_NAME="zorn-kernel-bakasu-susfs-$(date +%Y%m%d-%H%M).zip"
+          zip -r9 "../$ZIP_NAME" * -x .git README.md '*placeholder'
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zorn-kernel-zip
+          path: zorn-kernel-*.zip
